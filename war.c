@@ -5,7 +5,7 @@
 #include <time.h>
 
 // ============================================================================
-//         PROJETO WAR ESTRUTURADO - NÍVEL AVENTUREIRO
+//         PROJETO WAR ESTRUTURADO - NÍVEL MESTRE
 // ============================================================================
 
 // --- Constantes Globais ---
@@ -14,6 +14,14 @@
 #define MAX_COLOR_LENGTH 20      // Tamanho máximo para cor do exército
 #define MIN_TROOPS_TO_ATTACK 2   // Mínimo de tropas para atacar
 #define DICE_SIDES 6             // Lados do dado (1-6)
+#define TERRITORIES_TO_WIN 3     // Territórios necessários para vitória
+#define TARGET_ARMY_COLOR "Verde" // Cor do exército alvo para destruição
+
+// --- Tipos de Missões ---
+typedef enum {
+    MISSION_DESTROY_GREEN = 1,   // Destruir todos os territórios verdes
+    MISSION_CONQUER_THREE = 2    // Conquistar 3 territórios
+} MissionType;
 
 // --- Estrutura de Dados ---
 typedef struct {
@@ -25,29 +33,31 @@ typedef struct {
 // --- Protótipos das Funções ---
 // Funções de setup e gerenciamento de memória
 Territory* allocate_map(void);
+void initialize_territories(Territory* territories);
 void free_memory(Territory* territories);
 
 // Funções de interface com o usuário
-void initialize_territories(Territory* territories);
 void display_map(const Territory* territories);
 void display_main_menu(void);
+void display_mission(MissionType current_mission);
 
 // Funções de lógica principal do jogo
 void attack_phase(Territory* territories);
 int simulate_attack(Territory* territories, int attacker_index, int defender_index);
-int choose_territory(const char* action, const Territory* territories);
+MissionType draw_mission(void);
+int check_victory(const Territory* territories, MissionType mission, const char* player_color);
 
-// Função utilitária
+// Funções auxiliares
+int choose_territory(const char* action, const Territory* territories);
 void clear_input_buffer(void);
-int validate_troops(int troops);
 int validate_territory_index(int index);
+int count_player_territories(const Territory* territories, const char* player_color);
+int count_green_territories(const Territory* territories);
 
 // --- Função Principal ---
 int main() {
-    // Configura o locale para português (acentos e caracteres especiais)
+    // Configura o locale para português e inicializa números aleatórios
     setlocale(LC_ALL, "Portuguese");
-    
-    // Inicializa a semente para números aleatórios baseada no tempo atual
     srand((unsigned int)time(NULL));
     
     // Aloca memória dinamicamente para o mapa
@@ -57,13 +67,22 @@ int main() {
         return 1;
     }
     
-    printf("=== JOGO WAR - BATALHAS ESTRATÉGICAS ===\n\n");
+    printf("=== JOGO WAR - MISSÕES ESTRATÉGICAS ===\n\n");
     
-    // Cadastra os territórios iniciais
+    // Inicializa territórios automaticamente
     initialize_territories(territories);
+    
+    // Sorteia uma missão para o jogador
+    const char* player_color = "Azul"; // Cor fixa do jogador
+    MissionType current_mission = draw_mission();
+    
+    printf("Sua cor de exército: %s\n", player_color);
+    display_mission(current_mission);
     
     // Loop principal do jogo
     int choice;
+    int game_won = 0;
+    
     do {
         printf("\n=== MAPA ATUAL DOS TERRITÓRIOS ===\n");
         display_map(territories);
@@ -75,7 +94,7 @@ int main() {
         if (scanf("%d", &choice) != 1) {
             printf("Erro: Digite apenas números!\n");
             clear_input_buffer();
-            choice = -1; // Força repetição do loop
+            choice = -1;
             continue;
         }
         clear_input_buffer();
@@ -85,21 +104,35 @@ int main() {
             case 1:
                 attack_phase(territories);
                 break;
+                
+            case 2:
+                // Verifica se a missão foi cumprida
+                game_won = check_victory(territories, current_mission, player_color);
+                if (game_won) {
+                    printf("\n🎉 PARABÉNS! VOCÊ VENCEU O JOGO! 🎉\n");
+                    printf("Missão cumprida com sucesso!\n");
+                } else {
+                    printf("\n📋 Status da Missão: AINDA NÃO CUMPRIDA\n");
+                    display_mission(current_mission);
+                }
+                break;
+                
             case 0:
                 printf("Encerrando o jogo...\n");
                 break;
+                
             default:
                 printf("Opção inválida! Tente novamente.\n");
                 break;
         }
         
         // Pausa para o jogador ler os resultados
-        if (choice != 0) {
+        if (choice != 0 && !game_won) {
             printf("\nPressione Enter para continuar...");
             getchar();
         }
         
-    } while (choice != 0);
+    } while (choice != 0 && !game_won);
     
     // Libera a memória alocada
     free_memory(territories);
@@ -115,7 +148,6 @@ int main() {
  * Retorna ponteiro para a memória alocada ou NULL em caso de falha
  */
 Territory* allocate_map(void) {
-    // Usa calloc para alocar e zerar a memória automaticamente
     Territory* territories = (Territory*)calloc(MAX_TERRITORIES, sizeof(Territory));
     
     if (territories == NULL) {
@@ -127,18 +159,8 @@ Territory* allocate_map(void) {
 }
 
 /**
- * Libera a memória previamente alocada para o mapa
- */
-void free_memory(Territory* territories) {
-    if (territories != NULL) {
-        free(territories);
-        territories = NULL; // Boa prática para evitar uso após liberação
-    }
-}
-
-/**
- * Função para cadastrar os dados de todos os territórios
- * Usa ponteiro para modificar o mapa original
+ * Inicializa automaticamente todos os territórios com dados pré-definidos
+ * Cria um cenário balanceado para o jogo
  */
 void initialize_territories(Territory* territories) {
     // Verifica se o ponteiro é válido
@@ -147,63 +169,59 @@ void initialize_territories(Territory* territories) {
         return;
     }
     
-    // Loop para cadastrar todos os territórios
+    // Dados pré-definidos dos territórios para inicialização automática
+    const char* territory_names[MAX_TERRITORIES] = {
+        "Brasil", "Argentina", "Peru", "Colombia", "Venezuela"
+    };
+    
+    const char* army_colors[MAX_TERRITORIES] = {
+        "Azul", "Verde", "Vermelho", "Verde", "Amarelo"
+    };
+    
+    const int initial_troops[MAX_TERRITORIES] = {
+        3, 4, 2, 3, 5
+    };
+    
+    // Inicializa cada território com os dados pré-definidos
     for (int i = 0; i < MAX_TERRITORIES; i++) {
-        printf("--- Cadastro do Território %d ---\n", i + 1);
+        // Copia o nome do território de forma segura
+        strncpy(territories[i].name, territory_names[i], MAX_NAME_LENGTH - 1);
+        territories[i].name[MAX_NAME_LENGTH - 1] = '\0'; // Garante terminação nula
         
-        // Solicita e lê o nome do território
-        printf("Digite o nome do território: ");
-        clear_input_buffer();
+        // Copia a cor do exército de forma segura
+        strncpy(territories[i].army_color, army_colors[i], MAX_COLOR_LENGTH - 1);
+        territories[i].army_color[MAX_COLOR_LENGTH - 1] = '\0'; // Garante terminação nula
         
-        if (fgets(territories[i].name, MAX_NAME_LENGTH, stdin) != NULL) {
-            // Remove a quebra de linha que o fgets pode capturar
-            size_t len = strlen(territories[i].name);
-            if (len > 0 && territories[i].name[len - 1] == '\n') {
-                territories[i].name[len - 1] = '\0';
-            }
-        }
-        
-        // Solicita e lê a cor do exército
-        printf("Digite a cor do exército dominante: ");
-        
-        if (fgets(territories[i].army_color, MAX_COLOR_LENGTH, stdin) != NULL) {
-            // Remove a quebra de linha que o fgets pode capturar
-            size_t len = strlen(territories[i].army_color);
-            if (len > 0 && territories[i].army_color[len - 1] == '\n') {
-                territories[i].army_color[len - 1] = '\0';
-            }
-        }
-        
-        // Solicita e lê o número de tropas com validação
-        do {
-            printf("Digite o número de tropas (mínimo 2 para poder atacar): ");
-            
-            if (scanf("%d", &territories[i].troops) != 1) {
-                printf("Erro: Digite apenas números!\n");
-                clear_input_buffer();
-                territories[i].troops = 0;
-            } else if (!validate_troops(territories[i].troops)) {
-                printf("Erro: Número de tropas deve ser maior que 1!\n");
-            }
-            
-        } while (!validate_troops(territories[i].troops));
-        
-        printf("Território cadastrado com sucesso!\n\n");
+        // Define o número inicial de tropas
+        territories[i].troops = initial_troops[i];
+    }
+    
+    printf("Territórios inicializados automaticamente!\n");
+}
+
+/**
+ * Libera a memória previamente alocada para o mapa
+ */
+void free_memory(Territory* territories) {
+    if (territories != NULL) {
+        free(territories);
+        territories = NULL;
     }
 }
 
 /**
- * Exibe o menu principal com as opções disponíveis
+ * Exibe o menu principal com todas as opções disponíveis
  */
 void display_main_menu(void) {
     printf("\n=== MENU PRINCIPAL ===\n");
     printf("1 - Iniciar Fase de Ataque\n");
+    printf("2 - Verificar Status da Missão\n");
     printf("0 - Sair do Jogo\n");
     printf("=======================\n");
 }
 
 /**
- * Função para exibir o mapa atual de todos os territórios
+ * Exibe o mapa atual de todos os territórios em formato de tabela
  * Usa const para garantir que apenas leia os dados
  */
 void display_map(const Territory* territories) {
@@ -232,7 +250,33 @@ void display_map(const Territory* territories) {
 }
 
 /**
- * Gerencia a fase de ataque do jogo
+ * Exibe a descrição da missão atual do jogador
+ */
+void display_mission(MissionType current_mission) {
+    printf("\n=== SUA MISSÃO SECRETA ===\n");
+    
+    switch (current_mission) {
+        case MISSION_DESTROY_GREEN:
+            printf("🎯 Destruir todos os exércitos VERDES\n");
+            printf("   Conquiste todos os territórios verdes para vencer!\n");
+            break;
+            
+        case MISSION_CONQUER_THREE:
+            printf("🎯 Conquistar %d territórios\n", TERRITORIES_TO_WIN);
+            printf("   Domine pelo menos %d territórios com seu exército para vencer!\n", 
+                   TERRITORIES_TO_WIN);
+            break;
+            
+        default:
+            printf("❌ Missão desconhecida!\n");
+            break;
+    }
+    
+    printf("==========================\n");
+}
+
+/**
+ * Gerencia a fase de ataque com validações completas
  * Permite ao jogador escolher territórios para atacar e defender
  */
 void attack_phase(Territory* territories) {
@@ -271,6 +315,7 @@ void attack_phase(Territory* territories) {
 
 /**
  * Simula uma batalha entre dois territórios usando dados aleatórios
+ * Implementa todas as regras de combate do War
  * Retorna 1 se houve conquista, 0 caso contrário
  */
 int simulate_attack(Territory* territories, int attacker_index, int defender_index) {
@@ -281,10 +326,14 @@ int simulate_attack(Territory* territories, int attacker_index, int defender_ind
     }
     
     printf("\n--- SIMULAÇÃO DE BATALHA ---\n");
-    printf("Atacante: %s (%d tropas)\n", 
-           territories[attacker_index].name, territories[attacker_index].troops);
-    printf("Defensor: %s (%d tropas)\n", 
-           territories[defender_index].name, territories[defender_index].troops);
+    printf("Atacante: %s (%s - %d tropas)\n", 
+           territories[attacker_index].name, 
+           territories[attacker_index].army_color,
+           territories[attacker_index].troops);
+    printf("Defensor: %s (%s - %d tropas)\n", 
+           territories[defender_index].name,
+           territories[defender_index].army_color, 
+           territories[defender_index].troops);
     
     // Gera dados aleatórios para atacante e defensor
     int attack_dice = (rand() % DICE_SIDES) + 1;  // Dado de 1 a 6
@@ -304,9 +353,13 @@ int simulate_attack(Territory* territories, int attacker_index, int defender_ind
         // Verifica se o território foi conquistado
         if (territories[defender_index].troops <= 0) {
             // Transfere o território para o atacante
-            strcpy(territories[defender_index].army_color, territories[attacker_index].army_color);
+            strncpy(territories[defender_index].army_color, 
+                   territories[attacker_index].army_color, 
+                   MAX_COLOR_LENGTH - 1);
+            territories[defender_index].army_color[MAX_COLOR_LENGTH - 1] = '\0';
+            
             territories[defender_index].troops = 1; // Coloca 1 tropa do conquistador
-            territories[attacker_index].troops--;   // Atacante perde 1 tropa (que foi para o território conquistado)
+            territories[attacker_index].troops--;   // Atacante perde 1 tropa
             return 1; // Houve conquista
         }
     } else {
@@ -316,6 +369,62 @@ int simulate_attack(Territory* territories, int attacker_index, int defender_ind
     }
     
     return 0; // Não houve conquista
+}
+
+/**
+ * Sorteia uma missão aleatória para o jogador
+ * Retorna o tipo da missão sorteada
+ */
+MissionType draw_mission(void) {
+    // Gera número aleatório entre 1 e 2 para escolher a missão
+    int mission_roll = (rand() % 2) + 1;
+    
+    printf("🎲 Sorteando sua missão secreta...\n");
+    
+    return (MissionType)mission_roll;
+}
+
+/**
+ * Verifica se o jogador cumpriu os requisitos de sua missão atual
+ * Implementa a lógica para cada tipo de missão
+ * Retorna 1 se a missão foi cumprida, 0 caso contrário
+ */
+int check_victory(const Territory* territories, MissionType mission, const char* player_color) {
+    // Verifica se os parâmetros são válidos
+    if (territories == NULL || player_color == NULL) {
+        printf("Erro: Parâmetros inválidos para verificação de vitória!\n");
+        return 0;
+    }
+    
+    switch (mission) {
+        case MISSION_DESTROY_GREEN:
+            // Missão: Destruir todos os exércitos verdes
+            {
+                int green_territories = count_green_territories(territories);
+                printf("\nTerritórios verdes restantes: %d\n", green_territories);
+                
+                if (green_territories == 0) {
+                    return 1; // Vitória! Não há mais territórios verdes
+                }
+                return 0; // Ainda há territórios verdes
+            }
+            
+        case MISSION_CONQUER_THREE:
+            // Missão: Conquistar 3 territórios
+            {
+                int player_territories = count_player_territories(territories, player_color);
+                printf("\nTerritórios conquistados: %d/%d\n", player_territories, TERRITORIES_TO_WIN);
+                
+                if (player_territories >= TERRITORIES_TO_WIN) {
+                    return 1; // Vitória! Conquistou 3 ou mais territórios
+                }
+                return 0; // Ainda não conquistou territórios suficientes
+            }
+            
+        default:
+            printf("Erro: Tipo de missão desconhecido!\n");
+            return 0;
+    }
 }
 
 /**
@@ -364,17 +473,50 @@ void clear_input_buffer(void) {
 }
 
 /**
- * Valida se o número de tropas é válido para o jogo
- * Retorna 1 se válido, 0 se inválido
- */
-int validate_troops(int troops) {
-    return troops >= MIN_TROOPS_TO_ATTACK; // Mínimo de 2 tropas
-}
-
-/**
  * Valida se o índice do território está dentro dos limites válidos
- * Retorna 1 se válido, 0 se inválido
  */
 int validate_territory_index(int index) {
     return index >= 0 && index < MAX_TERRITORIES;
+}
+
+/**
+ * Conta quantos territórios pertencem ao jogador especificado
+ * Retorna o número de territórios da cor especificada
+ */
+int count_player_territories(const Territory* territories, const char* player_color) {
+    if (territories == NULL || player_color == NULL) {
+        return 0;
+    }
+    
+    int count = 0;
+    
+    // Percorre todos os territórios contando os do jogador
+    for (int i = 0; i < MAX_TERRITORIES; i++) {
+        if (strcmp(territories[i].army_color, player_color) == 0) {
+            count++;
+        }
+    }
+    
+    return count;
+}
+
+/**
+ * Conta quantos territórios verdes ainda existem no mapa
+ * Retorna o número de territórios verdes restantes
+ */
+int count_green_territories(const Territory* territories) {
+    if (territories == NULL) {
+        return 0;
+    }
+    
+    int count = 0;
+    
+    // Percorre todos os territórios contando os verdes
+    for (int i = 0; i < MAX_TERRITORIES; i++) {
+        if (strcmp(territories[i].army_color, TARGET_ARMY_COLOR) == 0) {
+            count++;
+        }
+    }
+    
+    return count;
 }
